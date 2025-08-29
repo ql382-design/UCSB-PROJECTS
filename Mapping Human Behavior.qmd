@@ -1,0 +1,1301 @@
+---
+title: |
+  Mapping Human Behavior: Predicting Route Choices and Navigation Efficiency
+author: Mable Zhou, Hester Li, Tianhao Qin
+date: "`r Sys.Date()`"
+format:
+  html:
+    self-contained: true
+    embedded-figure: true
+    toc: true
+    toc-location: left
+    code-fold: true
+    number-sections: false
+    theme: yeti
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+
+
+
+\newpage
+
+# Abstract
+
+*Navigation strategies vary significantly across individuals, influenced by cognitive abilities and personality traits. This study examines these differences and predicts navigation preferences using a dataset of 262 participants, including 55 predictors related to demographics, spatial skills, memory, and personality. Models such as linear regression, content-based filtering (CBF), and Random Forest Regressor were applied to predict shortcut versus familiar route preferences.*
+
+*Key findings indicate navigation efficiency, spatial memory errors, and personality traits as significant predictors. The linear regression model explained ~60% of strategy variability, and the CBF model achieved 67.4% accuracy. Feature importance analysis highlighted spatial navigation and exploratory behaviors as critical factors. While results support personalized navigation recommendations, future work will refine predictive models and enhance system performance.*
+
+\newpage
+
+
+
+# 1. Introduction
+
+## 1.1 Background and Motivation
+
+Navigation is an indispensable part of our daily lives, yet the journey to a destination is often far from uniform across individuals.  Getting lost can expose us to unforeseen risks, highlighting the importance of robust navigation abilities.  However, significant individual differences in navigation strategies persist, with people employing distinct approaches to reach the same destination (Boone et al., 2019).  What drives these differences?  The underlying mechanisms and influencing factors remain enigmatic.
+
+A prominent theoretical framework posits that navigation strategies are shaped by a combination of environmental learning capabilities and personality traits (Hegarty et al., 2023).  Inadequate environmental knowledge or difficulty in orienting oneself within a space can significantly hamper the selection of effective strategies.  Environmental learning is intricately tied to general memory capacity, as a stronger memory enables better retention of landmarks and spatial features.  Spatial abilities, such as mental transformation, spatial visualization, and perspective-taking, further enhance the capacity to orient oneself correctly in an environment.  These cognitive dimensions play a pivotal role in effective navigation.
+
+```{r echo=FALSE, results='asis'}
+cat('<iframe src="https://giphy.com/embed/2A29ghC2SEWYIYXGKt" width="480" height="271" style="" frameBorder="0" class="giphy-embed" allowFullScreen></iframe>')
+```
+
+Beyond cognitive abilities, personality traits are also likely to influence route selection. For instance, individuals who enjoy exploration, embrace novelty, exhibit confidence in their abilities, and willingly take risks may prefer uncharted routes, often leading to shortcuts. Conversely, those with higher anxiety levels or risk-averse tendencies are more likely to stick to familiar paths, showing little motivation to explore new alternatives. Together, variations in memory, spatial skills, and personality traits underpin the diverse strategies employed in navigation.
+
+Inspired by recommendation systems used in domains like music or movies, where user preferences are matched to tailored suggestions, we propose a novel approach to route recommendation. By leveraging unique individual characteristics—such as environmental learning ability, spatial and memory skills, and personality traits—we aim to predict navigation strategies. Specifically, our system will assess whether individuals are more inclined toward shortcutting or favoring familiar routes when navigating novel environments. Participants initially learn a route via guided paths and later navigate to various destinations using strategies of their choice. The dataset, comprising both self-reported surveys and behavioral measures, includes detailed information on memory capacity, spatial abilities, navigation skills, and personality traits collected from 262 participants across 55 features.
+
+## 1.2 Research Questions
+
+- **Can personality traits, such as risk-taking versus risk-avoidance, predict individuals’ navigation strategies?  **
+
+- **How do learning, memory, and spatial abilities influence the likelihood of choosing shortcuts versus familiar routes?  **
+
+## 1.3 Objective
+
+This study seeks to develop a sophisticated inferential model capable of predicting individuals’ navigation strategies based on their unique traits and abilities.   By integrating cognitive and personality-related predictors, we aim to uncover patterns and associations that drive route choices, ultimately laying the groundwork for personalized navigation recommendations in novel environments.
+
+# 2. Methods
+
+## 2.1 Dataset Overview
+
+-   Load all necessary packages first
+
+```{r}
+library(ggplot2)
+library(readxl)
+library(pheatmap)
+library(corrplot)
+library(tidyverse)
+library(janitor)
+library(FactoMineR)
+library(factoextra)
+library(gridExtra)
+library(dplyr)
+library(caret)
+library(randomForest)
+library(doParallel)
+library(foreach)
+library(pROC)
+library(dplyr)
+library(car)  # For VIF and other diagnostics
+library(lmtest)
+library(e1071)  
+library(doRNG) 
+library(naniar)
+library(reticulate)
+```
+
+We first rename the column for easier operation, consistency, and readability. We used the clean_names() function from the janitor package to convert column names into a consistent format, making them lowercase and replacing spaces or special characters with underscores. Following this, the column names were manually renamed to more descriptive and meaningful labels, such as "Age," "Gender," and "SpatialAnx," for clarity and ease of interpretation. We also changed categorical variable to numeric for later PCA.
+```{r}
+# Load the raw data
+raw_data <- read.csv("134_234 final project.csv")
+
+# Clean column names
+data <- raw_data %>%
+  clean_names()
+
+colnames(data) <- c("ID", "Loc", "Age", "Hand", "Gender", "Race", "Edu", "RBLPoint", "RBLStrategy", 
+                    "RBLEff", "GenMS", "Extrav", "Agree", "Open", "Neuro", "Consci", "RBMean", 
+                    "SocRB", "RecRB", "GambRB", "HealthRB", "EthicsRB", "InvRB", "SA", 
+                    "VerbNback", "SpatialNback", "ELPoint", "ELSuccess", "ELEff", "SBSOD", 
+                    "PaperFold", "RoadMap", "Raven", "Sleep", "GPS", "GrowthMind", "BandExplore", 
+                    "BandExploit", "FaceMem", "RSpan", "RouteErr", "SOT", "CreatAct", 
+                    "SportAct", "VGAct", "NavAct", "TechAct", "Exercise", "ExploreTend", 
+                    "VGExp", "MRCorrect", "MRRT", "SymSpan", "MBT", "MFT")
+
+#convert categorical variable to numeric for PCA
+
+data <- data  %>% mutate(Loc = case_when(
+    Loc == "SantaBarbara" ~ 1,
+    Loc == "Irvine" ~ 2 ))
+
+data <- data %>% 
+  mutate(Hand= case_when(
+    Hand == "R" ~ 1,
+    Hand == "L" ~ 2,
+     TRUE ~ NA_real_))
+
+data <- data %>%
+  mutate(Gender = case_when(
+    grepl("^M", Gender, ignore.case = TRUE) ~ 0,
+    grepl("^F", Gender, ignore.case = TRUE) ~ 1,
+  ))
+
+data <- data %>%
+  mutate(Race = case_when(
+    grepl("white", Race, ignore.case = TRUE) ~ 1,
+    grepl("asian", Race, ignore.case = TRUE) ~ 2,
+    TRUE ~ 3  # Assign 3 to all other races
+  ))
+```
+
+We then take a look at data and get a sense of distribution of missing data：
+
+```{r}
+# Number of observations (rows) and predictors (columns)
+num_observations <- nrow(data)
+num_predictors <- ncol(data)
+
+# Calculate the percentage of missing data
+total_values <- num_observations * num_predictors
+missing_values <- sum(is.na(data))
+percent_missing <- (missing_values / total_values) * 100
+
+
+# Percentage of missing data per column
+missing_summary <- colSums(is.na(data))
+missing_percent_col <- (missing_summary / nrow(data)) * 100
+
+
+# Display results
+cat("Number of observations:", num_observations, "\n")
+cat("Number of predictors:", num_predictors, "\n")
+cat(sprintf("Percentage of missing data: %.2f%%\n", percent_missing))
+
+vis_miss(data)
+```
+
+The dataset comprises **262 observations** and **55 predictors**, with a missing data rate of **1.09%**. It captures a wide range of variables, including demographic, self-reported survey, and behavioral measures, providing a comprehensive view of individual differences in navigation ability and related factors.
+
+**Variable keys are provided here for readers to understand variables better.**
+
+**Demographics**: Some variables convey participants' demographics, offering insight for diverse profile of participants.
+
+`Loc`: The location of participants when they completed the task. It's either in UCSB (1)or in UCI (2).
+
+`Age`: The age of participants. 
+
+`Hand`: Whether participants are left handed (1) or right handed (2). 
+
+`Gender`: Gender of participants, males for 0, and females for 1. 
+
+`Race`: Race of participants. Most samples are white (1) or asian (2), so the rest of race (black and latino) are grouped into one category as others (3).
+
+`Edu`:Education levels of participants in numeric forms. Possible ranges from 1 to 22. 21 implies a fifth year graduate degree.
+
+**Cognitive and behavioral measures**: The following measures are essential for understanding the cognitive processes (learning, memory, and spatial ability) influencing navigation strategies and exploration behaviors. 
+
+***Ability to learn the layout of the environment***: 
+
+`RBLPoint`: This variable is measured through a guided-route navigation task. Participants learned the location of 10 landmarks through a guided route in the environment, and were asked to indicate directions between landmarks stationary. It's an error scores, and higher number means more error, and worse ability to learn the environments. 
+
+`RBLEff`: This variable is measured from the same guided-reoute navigation task. Participants were asked to navigate from one landmark in the environment to another landmark in the environment. All landmarks were visible during navigation. Participants' efficiency was measured. Higher number means worse efficiency. 
+
+`ELPoint`: This variable is measured through a exploratory navigation task. Participants learned the location of 8 landmarks in 3 minutes through free exploration of the environment, and were asked to indicate direction between landmarks stationary.Same as `RBLPoint`, it's an error scores.
+
+`ELSuccess`: This variable is measured from the same exploratory navigation task. Participants are asked to navigate from one landmark to another target landmark in the environment. All the landmarks were invisible, so participants need to memorize the location of the landmarks, and won't get feedback on whether they get to the correct place or not. Their success rate in getting to the correct target were measured. Higher scores indicate more successful wayfinding. 
+
+`ELEff`: This variable is measured from the same exploratory navigation task. Participants' efficiency getting to the goal from the starting point is measured. Higher scores mean worse efficiency. 
+`RouteErr`:This variable is measured from a route learning task. Participants were asked to learned a guided route with 20 turns twice. Along the routes, there are landmarks, serving as visual cues. Then, they were asked to retrace the route without guide. Their errors were measured. Higher number means more errors they made during retracing by making wrong turns.
+
+***memory ability and executive function***: 
+
+`VerbNback`: This variable measures short term verbal working memory ability and executive function using verbal n-back task. Participants need to respond to the target letter that is the same as letter appeared 3 letters before. It is scores in d prime scores, and higher score indicates better performance. 
+
+`SpatialNback`: This variable measures short term spatial working memory ability and executive function using spatial n-back task. Participants need to respond to the target square that is the same as square appeared 3 squares before. It is scores in d prime scores, and higher score indicates better performance. 
+
+`RSpan`: This variable measures short term verbal working memory ability. Participants need to remember sequences of letters while judging if various amounts of sentences make sense or not. It is scored by \# of span capacity and higher numbers indicates better performance. 
+
+`SymSpan`: This variable measures short term spatial working memory ability. Participants need to remember sequences of squares while judging if various images of block are symmetrical or not. It is scored by \# of span capacity and higher numbers indicates better performance.
+
+`FaceMem`: This variable measures long term epsodic memory. Participants saw a sequence of face, name and occupation, and asked to recall the correct name and occupations for the face. It is scored by \# of total correct and higher number indicates better performance.
+
+**spatial ability**: 
+
+`PaperFold`: This variable measures spatial visualization ability. Participants are asked to imagine punching holes on a folded paper, visualize the locations of holes when paper is unfolded, and select the correct choices. The scores are calculated by \# correct -1/4 \* \# incorrect, and higher scores indicate better ability. 
+
+`SOT`:This variable measures perspective taking ability.
+Participants need to imagine perspectives other than egocentric views, and making judgement of relative direction between an array of objects. It is measured by degree of error, so higher number indicates more errors and worse performance. 
+
+`RoadMap`:This variable also measures perspective taking ability. Participants need to make judgement of left or right turn from an allocentric perspective. Is is measured by total accuracy and higher number indicates better performance. 
+
+`Raven`:This variable measures abstract spatial reasoning. People need to find a pattern of shapes with different configuration, and higher numbers indicate better performance. 
+
+`MRCorrect`+ `MRRT`: These two variables measure mental rotation ability. Participants are asked to imagine the rotation of cubes, and select if the cubes are the same or mirror views of the exemplar cube. Both total correct (`MRCorrect`) and reaction time(`MRRT`) are measured. Higher numbers in total are correct, and lower numbers in reaction time indicate a better performance.
+
+**Personality trait**: The following measures include both self-report survey and behavioral measures for people's personality traits and risk taking tendencies. They are crucial for analyzing the interplay between cognitive performance and individual dispositions in influencing navigation strategies. 
+
+***self-report survey***:
+
+`Extrav`+`Agree`+`Open`+`Neuro`+`Consci`: These variables are classic measures of personality trait. It is also called Big Five personality traits. It includes 5 sub factors,extraversion, agreeableness, openness to experience, neuroticism, and consciousness. Higher number indicates higher correspondence of the trait. 
+
+`RBMean`: This variable measures whether people like to risk or not engaging in various types of activity. The variable is aggregated across 52 items. Higher number indicates higher tendency to take risk. It has 6 sub factors, including recreational (`RecRB`), financial(`InvRB`), social (`SocRB`), ethical(`EthicsRB`), health (`HealthRB`), and gambling risk(`GambRB`). 
+
+`SBSOD`:This variable measures participants' confidence of their navigation ability.Higher score means more confidence in their ability.
+
+`SA`: This variable measures participants' anxiety when navigating in the environment. A higher number indicates higher anxiety. `GPS`: This variable measures participants' reliance on GPS devices when navigating. Higher scores means more reliance on GPS devices.
+
+`ExploreTend`:This variable measures participants' tendency to explore the space around. A higher number means higher tendency to explore new space.
+
+`GrowthMind`: This variable measures participants' mindset about improvement of navigation ability. A higher number means a growth mindset to improve as opposed to a fixed mindset. 
+
+`VGExp`: This variable measures participants' video game playing experience. Higher scores indicate more experience with video games. 
+`CreatAct`+`SportAct`+`VGAct`+`NavAct`+`TechAct`: These 5 variables measure participants' experience engaging in various types of activities, including creative activities, sport activities, video game activities, navigation activities, and technological activities. Higher score means more engagement in certain type of activities. 
+
+`Exercise`: This variable measures participants' time spent in doing physical exercise. Higher scores mean more time spent doing exercise.
+
+`Sleep`:This variable measures participants' amount of sleep at night. Higher number means more time sleeping.
+
+`GenMS`:This variable measures participants' motion sickness level when doing the task. Higher number means more motion sickness.
+
+***Behavioral measures***:
+
+`BandExplore` + `BandExploit`: These two variables measure decision making process, and from that we can infer if the person like to explore their decisions or exploit the given options. Participants need to make choices of given options to maximize reward, and their behaviors were transformed into a ratio score of tendency to explore new choices (`BandExplore`) or a tendency to exploit their choices (`BandExploit`). Higher scores mean higher tendency. 
+
+`MBT` + `MFT`: These two variables also measure decision making process, and whether participants form a rule-based model to make decisions or make model-free decisions. Participants need to make choices of given options to maximize reward, and their behaviors were transformed into a z-ratio score of tendency to rely on model (`MBT`) or a tendency to remain model free (`MFT`). Higher scores mean higher tendency.
+
+**Outcome variable**: 
+
+`RBLStrategy`: This variable is our outcome variable that we are interested in predicting. It came from the same guided-route navigation task that is discussed above. This variable measures participants' navigation strategies. Higher number indicates more percentages of shortcut used while lower number indicates more percentages of taking familiar routes.
+
+\newpage
+
+## 2.2 EDA and Data Preprocessing
+
+Some variables in the original dataset have more missing than other, such as education level (11%),spatial n-back (5%),route learning error (6%), and both model_based and model_free learning (5%). Before making the decision on how to handle missing data, we conducted an PCA and see how importance these variables are and how they hang together.
+
+RBLStrategy is the outcome variable we are interested in predicting, so it was excluded from the PCA because including it in PCA could introduce bias and artificially inflate its contribution to the principal components, leading to misleading interpretations. By excluding RBLStrategy, we ensure that the PCA focuses solely on the relationships among the predictor variables, allowing us to uncover patterns and dimensions in the dataset without being influenced by the target outcome.
+
+```{r fig.width=10, fig.height=8, dpi=300}
+# Exclude the outcome variable "RBLStrategy" from the PCA
+continuous_vars_filtered <- data %>% 
+  select(-c(RBLStrategy,ID) ) # Remove the outcome variable and ID, given it's only an identifier and not the predictor
+
+# Perform PCA
+pca_res <- PCA(continuous_vars_filtered, graph = FALSE)
+
+# Visualize PCA results
+p1 <- fviz_pca_ind(pca_res, axes = c(1, 2), 
+                   label = "var",
+                   col.ind = "blue", 
+                   col.var = "black", 
+                   repel = TRUE) +  
+  ggtitle("PCA - Dim1 vs Dim2")
+
+p2 <- fviz_pca_ind(pca_res, axes = c(1, 3), 
+                   label = "var", 
+                   col.ind = "blue", 
+                   col.var = "black", 
+                   repel = TRUE) +  
+  ggtitle("PCA - Dim1 vs Dim3")
+
+p3 <- fviz_pca_ind(pca_res, axes = c(2, 3), 
+                   label = "var", 
+                   col.ind = "blue", 
+                   col.var = "black", 
+                   repel = TRUE) +  
+  ggtitle("PCA - Dim2 vs Dim3")
+
+# Contribution of variables to dimensions
+pca_var <- get_pca_var(pca_res)
+
+dim1_contrib <- pca_var$contrib[, 1]  
+dim2_contrib <- pca_var$contrib[, 2] 
+
+# Contribution of variables to dimensions
+pca_var <- get_pca_var(pca_res)
+
+dim1_contrib <- pca_var$contrib[, 1]  
+dim2_contrib <- pca_var$contrib[, 2] 
+
+
+# Arrange plots
+grid.arrange(p1, p2, p3, ncol = 2)
+
+# Variable contribution visualization
+fviz_pca_var(
+  pca_res,
+  col.var = "contrib",                        # Color by contributions
+  gradient.cols = c("#0072B2", "#56B4E9", "#D55E00"), # Adjust color palette
+  repel = TRUE,                               # Avoid overlapping labels
+  labelsize = 5,                              # Increase label size for readability
+  arrowsize = 0.8                             # Adjust arrow thickness
+) + 
+  theme_minimal(base_size = 14) +             # Use a cleaner theme with larger text
+  ggtitle("Enhanced PCA - Variable Contributions") +  # Add a clearer title
+  xlab("Dim1 (12.3%)") +                      # Explicitly label axes with variance
+  ylab("Dim2 (8.5%)") + 
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"), # Center and style title
+    legend.title = element_text(size = 12),                         # Adjust legend title size
+    legend.text = element_text(size = 10),                          # Adjust legend text size
+    axis.title = element_text(size = 12),                           # Increase axis title size
+    axis.text = element_text(size = 10)                             # Increase axis text size
+  )
+```
+- The first three components explained 12.1%, 8.6%, and 5.1% of the variance, respectively, accounting for a total of 25.8% of the variance.
+ 
+Based on the PCA result, variables with more missing values, like education level did not explain much variance in the data, so this variable can potentially be excluded. Same as the spatial nback and both model based and model free learning. Route learning error explained some variance, so we want to retain this variable.
+
+```{r}
+# Exclude variable with high missing, but not explaining much variance.
+continuous_vars_filtered <- continuous_vars_filtered %>% 
+  select(-c(Edu,SpatialNback,MBT,MFT) ) 
+```
+
+For the rest of missing values, they were missing due to recording error of the program, and we can conclude that they are missing data completely at random. Deleting them should not induce bias in the dataset. To address these missing values, and given we have a low percentage of missing values, we decide to apply list wise deletion using the na.omit() function. This approach ensures that only complete data are retained for analysis, and we should not lose much data. 
+
+```{r, echo=FALSE, warning=FALSE, message=FALSE}
+cleaned_data <- cbind(continuous_vars_filtered,data[,c("ID","RBLStrategy")])
+cleaned_data <- na.omit(cleaned_data)
+
+# Check for missing values after row deletion
+missing_values_after <- sum(is.na(cleaned_data))
+cat("Number of missing values after row deletion:", missing_values_after, "\n")
+
+# Updated number of observations
+num_observations_cleaned <- nrow(cleaned_data)
+cat("Number of observations after row deletion:", num_observations_cleaned, "\n")
+
+```
+
+Now that we have a clean dataset with complete observation, we can perform some feature engineering to reduce the amount of variables we have and make the dataset cleaner.
+
+```{r}
+#Remove RBLefficiency as it came from the same task as the outcome variable RBLstrategy, and shared method variance, which might induce bias.
+
+cleaned_data_final <- cleaned_data  %>% 
+  select(-c(RBLEff,ID,RBLStrategy))
+# Group ELeff and ELsuccess into one variable. They also came from the same task and shared method variance. Treat them as separate variable might lead to issue of colinearity.
+
+cleaned_data_final <- cleaned_data_final %>%
+  mutate(across(c(ELEff, ELSuccess, VGAct, VGExp,SportAct,Exercise, MRCorrect,MRRT), scale, .names = "z_{.col}"))
+
+cleaned_data_final$ELwfcomposite <- (cleaned_data_final$z_ELSuccess-cleaned_data_final$z_ELEff)/2
+
+#Group VGAct and VGExp into one variable. They both measured video game play experience and engagement in video game. They can be treated as one variable
+cleaned_data_final$VGcomposite <- (cleaned_data_final$z_VGAct+cleaned_data_final$z_VGExp)/2
+
+#Group sportAct and exercise into one variable. They both measured engagement in sport activity, and can be treated as one variable
+cleaned_data_final$Exercisecomposite <- (cleaned_data_final$z_SportAct+cleaned_data_final$z_Exercise)/2
+#Remove the subfactor for risk behavior scale, and only retain the average score of all scale. We are mainly interested in a trait of tend to take risk or not, and we are not so interested in what type of risk people like to take.
+
+cleaned_data_final <- cleaned_data_final  %>% 
+  select(-c(SocRB:InvRB ))
+
+
+#Group MRCorrect and MRRT into one variable. They shared method variance, and can be grouped into one variable.
+cleaned_data_final$MRcomposite <- (cleaned_data_final$z_MRCorrect-cleaned_data_final$z_MRRT)/2
+
+cleaned_data_final <- cleaned_data_final  %>% 
+  select(-c(ELEff, ELSuccess, VGAct, VGExp,SportAct,Exercise, MRCorrect,MRRT,z_ELEff:z_MRRT ))
+```
+
+We then redo PCA and evaluate the data:
+
+```{r}
+
+# Perform PCA
+pca_res <- PCA(cleaned_data_final, graph = FALSE)
+
+# Visualize PCA results
+p1 <- fviz_pca_ind(pca_res, axes = c(1, 2), 
+                   label = "var",
+                   col.ind = "blue", 
+                   col.var = "black", 
+                   repel = TRUE) +  
+  ggtitle("PCA - Dim1 vs Dim2")
+
+p2 <- fviz_pca_ind(pca_res, axes = c(1, 3), 
+                   label = "var", 
+                   col.ind = "blue", 
+                   col.var = "black", 
+                   repel = TRUE) +  
+  ggtitle("PCA - Dim1 vs Dim3")
+
+p3 <- fviz_pca_ind(pca_res, axes = c(2, 3), 
+                   label = "var", 
+                   col.ind = "blue", 
+                   col.var = "black", 
+                   repel = TRUE) +  
+  ggtitle("PCA - Dim2 vs Dim3")
+
+# Contribution of variables to dimensions
+pca_var <- get_pca_var(pca_res)
+
+dim1_contrib <- pca_var$contrib[, 1]  
+dim2_contrib <- pca_var$contrib[, 2] 
+
+# Top 10 contributors for each dimension
+cat("Top 10 contributors for Dim1:\n")
+print(head(dim1_contrib[order(dim1_contrib, decreasing = TRUE)], 10))
+cat("Top 10 contributors for Dim2:\n")
+print(head(dim2_contrib[order(dim2_contrib, decreasing = TRUE)], 10))
+
+cor(pca_var$contrib[, 1], pca_var$contrib[, 2])
+
+
+fviz_screeplot(pca_res, addlabels = TRUE, ylim = c(0, 100)) +
+  ggtitle("Scree Plot of the main components")
+
+```
+
+
+#### **Key Observations**
+
+-   **Contribution of Variables**:
+
+The correlation between contributions of variables to Dim1 and Dim2 is 0.1566, as shown by the `cor()` result. This low correlation indicates that Dim1 and Dim2 capture largely independent aspects of variance in the dataset:
+
+    -   **Dim1 (14.2%)**: Driven by both **navigation performance** and **spatial abilities**. Variables like `ELPoint`, `ELwfcomposite`, and `RoadMap` strongly influence Dim1, reflecting a shared underlying construct related to both navigation and small scale spatial abilities.
+
+    -   **Dim2 (8.5%)**: Driven mostly by **personality traits**, in terms of type of personality that open to new experience, and re. Variables such as `RBMean`,`Extrav`, and `ExerciseComposite` dominate Dim2, indicating the importance of personality, risk-taking factors and level of exercise engagement in explaining individual differences.
+
+The first three components explained 14.2%, 8.5%, and 6.1% of the variance, which explained a higher proportion of variance post-cleaning. Showing that the remaining variables were more relevant.(28.8% vs. 25.8% before cleaning).The retained variables now contribute more strongly to meaningful dimensions (Dim1 and Dim2).  Key variables with higher contributions reflect the dataset's most critical dimensions, reducing noise and redundancy.
+
+
+## 2.3 EDA Visualization
+
+After conducting PCA for data cleaning, it is critical to create additional visualizations that help interpret the data, guide model selection, and improve the communication of findings to our audience. Here are some meaningful visualizations:
+
+**Correlation Heatmap**
+
+```{r fig.width=10, fig.height=8, dpi=300}
+
+# Ensure your data is numeric. If not, select only numeric predictors.
+predictors <- cleaned_data_final
+
+# Compute correlation matrix
+cor_matrix <- cor(predictors, use = "complete.obs")
+
+# Load corrplot for nice visualizations
+library(corrplot)
+
+# Plot a correlation heatmap
+corrplot(cor_matrix, method = "color", type = "upper", order = "hclust", 
+         tl.col = "black", tl.cex = 0.7, addCoef.col = "black", 
+         number.cex = 0.5,
+         title = "Correlation Heatmap of Predictors", 
+         mar = c(0,0,1,0))
+
+
+```
+
+This correlation heatmap visualizes the relationships between predictors used in our project, highlighting both positive and negative associations. Variables like "ELPoint" and "RBLPoint" exhibit strong correlations, suggesting potential redundancy or shared influence on the target variable. Additionally, clusters of highly correlated variables, such as "TechAct," "NavAct," and "ExerciseComposite," indicate shared behavioral or cognitive patterns that can guide feature selection or dimensionality reduction for model improvement.
+
+**Density or Box Plots (Outcome vs. Predictors)**
+
+```{r fig.width=10, fig.height=8, dpi=300}
+
+# Assuming cleaned_data includes both RBLStrategy and Gender.
+library(ggplot2)
+
+ggplot(cleaned_data, aes(x = as.factor(Gender), y = RBLStrategy)) +
+  geom_boxplot(fill = "steelblue", alpha = 0.7) +
+  theme_minimal() +
+  labs(x = "Gender", y = "RBL Strategy", title = "Box Plot of RBL Strategy by Gender")
+
+```
+
+The box plot compares RBLStrategy values across genders. It shows no significant difference in median strategy preferences between males (0) and females (1). Both groups exhibit a similar range of strategy preferences, indicating that gender may not be a strong predictor of RBLStrategy.
+
+
+```{r fig.width=10, fig.height=8, dpi=300}
+
+ggplot(cleaned_data, aes(x = RBLStrategy)) +
+  geom_density(fill = "lightgreen", alpha = 0.7) +
+  theme_minimal() +
+  labs(x = "RBL Strategy", y = "Density", title = "Density Plot of RBL Strategy")
+
+
+```
+
+The density plot illustrates the overall distribution of RBLStrategy. The distribution is unimodal and slightly right-skewed, suggesting that most participants have moderate strategy preferences, with fewer individuals leaning toward extreme strategies (close to 0 or 1).
+
+```{r fig.width=10, fig.height=8, dpi=300}
+ggplot(cleaned_data, aes(x = SBSOD, y = RBLStrategy)) +
+  geom_point(alpha = 0.7, color = "darkred") +
+  geom_smooth(method = "lm", se = FALSE, color = "black") +
+  theme_minimal() +
+  labs(x = "SBSOD (Spatial Ability)", y = "RBL Strategy", 
+       title = "Scatterplot of RBL Strategy vs. Spatial Ability")
+
+```
+
+This scatterplot shows the relationship between RBLStrategy and spatial ability (measured by SBSOD). A weak positive trend is observed, suggesting that individuals with higher spatial ability may slightly prefer shortcut-based strategies. However, the scatterplot reveals a significant amount of variability, indicating that spatial ability alone may not strongly predict RBLStrategy.
+
+
+
+\newpage
+
+# 3.Modeling
+
+
+In this section, we explored multiple modeling approaches to understand and predict navigation strategies (RBL Strategy). *Linear Regression* was used to identify significant predictors, revealing that cognitive traits such as navigation efficiency and spatial memory errors were key determinants. We further extended this with an *Interaction Model* to test how interactions between demographic and cognitive traits influence navigation behavior, though it provided limited additional explanatory power. *The Content-Based Filtering (CBF) Model* leveraged similarity-based recommendations, predicting strategies by comparing users' traits with similar individuals. Lastly, we employed a *Random Forest Regressor Model* to capture non-linear relationships and rank the importance of features. 
+
+
+## 3.1 Linear Model *R*
+
+This section builds and evaluates linear regression models to predict `RBLStrategy` based on key predictors like demographics, cognitive traits, and personality measures. The base model includes main effects, while the interaction model incorporates interaction terms (e.g., `Age * Gender` and `PaperFold * SA`) to explore how combinations of variables jointly influence strategy preferences. 
+
+### 3.1.1 Building Base Model & Interaction Model
+
+We first build a Base Model:
+
+```{r}
+#add the outcome variable back to the dataframe
+cleaned_data_final <- cbind(cleaned_data_final,cleaned_data[,"RBLStrategy"])
+cleaned_data_final <- cleaned_data_final %>%
+  rename(RBLStrategy = `cleaned_data[, "RBLStrategy"]`)
+
+preProc <- preProcess(cleaned_data, method = c("center", "scale"))
+data_scaled <- predict(preProc, cleaned_data)
+
+# Fit a linear model
+lm_model <- lm(RBLStrategy ~ Age + Gender  + RBLPoint + RBLEff +
+                 ELPoint + ELSuccess + PaperFold + Open + SA +
+                 ExploreTend + VGExp + MRCorrect + SymSpan + 
+                 Extrav + Agree + Neuro + GrowthMind, 
+               data = data_scaled)
+
+```
+
+Then we add interaction terms:
+
+```{r}
+# Add interaction terms
+lm_interaction <- lm(RBLStrategy ~ Age * Gender + PaperFold * SA + 
+                       RBLPoint * Extrav, 
+                     data = data_scaled)
+
+```
+
+### 3.1.2 Models Comparison & Diagnostics
+
+
+```{r}
+# Calculate Variance Inflation Factor (VIF)
+vif_values <- vif(lm_model)
+print(vif_values)
+
+bptest(lm_model)  # Breusch-Pagan Test
+
+```
+All predictors have VIF values below 5, suggesting that multicollinearity is not a significant concern in our base model. This indicates the predictors are reasonably independent of one another.The p-value from the test is 0.009969, which is below the 0.05 threshold. This indicates that heteroscedasticity is present, meaning the assumption of constant variance is violated. This suggests that the model may require transformation or robust regression techniques to address this issue.
+
+
+```{r}
+# Summary of the model
+summary(lm_model)
+
+# Summary of the interaction model
+summary(lm_interaction)
+```
+
+The linear regression model explored the relationships between **RBLStrategy** and demographic, cognitive, and personality variables. Key results include:
+
+-   **Adjusted R²**: 0.6023 (indicating the model explains \~60% of the variability in RBLStrategy).
+
+-   **Significant Predictors** (p \< 0.05):
+
+    -   **RBLPoint (β = -0.113)**:  Indicates that higher pointing errors (worse spatial memory) correspond to lower RBLStrategy scores (less shortcutting behavior).
+    
+    -   **RBLEff (β = -0.058)**: Highlights that worse navigation efficiency strongly reduces shortcutting behavior.
+    
+    -   **ELPoint (β = -0.219)**: Shows that exploratory pointing errors are negatively associated with RBLStrategy.
+    
+    -   **Gender (β = 0.133)**: Suggests that gender differences significantly influence route selection, with females less likely to adopt shortcutting strategies.
+
+**Interpretations:** 
+
+- **Cognitive Measures**: Navigation efficiency and spatial memory are critical factors, underscoring their role in determining route selection.
+
+- **Demographics**: Gender plays a significant role, highlighting differences in navigation strategies.
+
+- **Spatial Ability**: Poorer spatial reasoning (as measured by PaperFold) is associated with a preference for familiar routes.
+
+------------------------------------------------------------------------
+
+**Interaction Model**
+
+An interaction model was tested to explore whether specific relationships (e.g., between demographic and cognitive traits) influence RBLStrategy. Key findings include:
+
+-   **Adjusted R²**: 0.2972 (lower than the base model, indicating the interaction terms did not add significant explanatory power).
+
+-   **Significant Predictors**:
+
+    -   **GenderM (β = -0.243)**:  Female participants showed a lower tendency for shortcutting.
+    
+    -   **RBLPoint (β = -0.505)**: TThe strong negative relationship between spatial memory errors and RBLStrategy remains consistent.
+    
+-   **Interaction Effects**:
+    
+    -   **Age:GenderM** and **PaperFold:SA**: No significant interactions were observed.
+
+**Interpretations:**
+
+- **Gender Differences**: Males are more likely to engage in shortcutting strategies compared to females.
+
+- **Cognitive Measures**: RBLPoint remains a significant factor, indicating a strong influence of spatial memory errors.
+
+- **Interaction Effects**: Weak or non-significant interactions suggest that main effects drive RBLStrategy, rather than combined influences of demographic or cognitive traits.
+
+
+**Comparison of Models**
+
+| Metric                 | Base Model | Interaction Model |
+|------------------------|------------|-------------------|
+| Adjusted R²            | 0.6023     | 0.2972            |
+| AIC                    | 425.3295   |  538.6047         |
+| Significant Predictors | 5          | 2                 |
+
+The **base model** outperformed the interaction model based on adjusted R², AIC, and the number of significant predictors. This suggests that adding interaction terms did not improve explanatory power.
+
+### 3.1.3 Model Visulizations
+
+
+
+```{r}
+# Plot residuals to check assumptions
+par(mfrow = c(2, 2))  # Arrange diagnostic plots
+plot(lm_model)
+
+```
+
+The diagnostic plots evaluate the assumptions of linear regression, including linearity, normality of residuals, homoscedasticity, and the presence of influential points. 
+
+Residuals vs Fitted: Shows a slight curvature, suggesting non-linearity in the relationship between predictors and the outcome.
+
+Q-Q Plot: Residuals mostly align with the diagonal, but deviations at the tails indicate non-normality.
+
+Scale-Location Plot: The spread of residuals is not entirely even, further confirming heteroscedasticity.
+
+Residuals vs Leverage: Observations 44, 260, and 120 have higher leverage, potentially influencing the model disproportionately and warranting further investigation.
+
+
+
+------------------------------------------------------------------------
+
+
+
+
+## 3.2 Content-Based Filtering (CBF) Model *PYTHON*
+
+We then try to build a Content-Based Filtering (CBF) recommendation mode. We aims to recommend a route strategy (RBLStrategy) for new users based on the traits of similar users in the dataset. Since the dataset includes a variety of user-specific traits, CBF leverages these features to find the `k` most similar individuals (neighbors) and aggregate their route strategy preferences. This aggregated preference helps infer what strategy might be suitable for the target user.
+
+### 3.2.1 CBF Model Building
+
+We first prepared all the necessary packages:
+
+```{python}
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split, KFold
+from sklearn.metrics import (
+    accuracy_score,
+    confusion_matrix,
+    precision_score,
+    recall_score,
+    f1_score,
+    roc_auc_score,
+)
+import statsmodels.api as sm
+from statsmodels.stats.outliers_influence import variance_inflation_factor
+from statsmodels.stats.diagnostic import het_breuschpagan
+from statsmodels.graphics.regressionplots import (
+    plot_leverage_resid2,
+    plot_partregress_grid,
+)
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.cluster import KMeans
+from sklearn.linear_model import LinearRegression
+import random
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split, KFold
+from sklearn.metrics import accuracy_score, confusion_matrix, precision_score, recall_score, f1_score, roc_auc_score
+import random
+import pandas as pd
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score, confusion_matrix
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.metrics import mean_squared_error, r2_score
+
+```
+
+We then do the same setup for python to prepares the data for all subsequent methods:
+
+```{python}
+# Load the raw data
+data = pd.read_csv("134_234 final project.csv")
+
+# Convert column names to lowercase and replace spaces/special characters with underscores
+data.columns = (
+    data.columns
+    .str.lower()                         # lower case
+    .str.strip()                         # remove leading/trailing whitespace
+    .str.replace('[^0-9a-zA-Z]+', '_', regex=True)  # non-alphanumeric replaced with underscores
+)
+
+# Manually rename columns to descriptive labels
+data.columns = [
+    "ID", "Loc", "Age", "Hand", "Gender", "Race", "Edu", "RBLPoint", "RBLStrategy", 
+    "RBLEff", "GenMS", "Extrav", "Agree", "Open", "Neuro", "Consci", "RBMean", 
+    "SocRB", "RecRB", "GambRB", "HealthRB", "EthicsRB", "InvRB", "SA", 
+    "VerbNback", "SpatialNback", "ELPoint", "ELSuccess", "ELEff", "SBSOD", 
+    "PaperFold", "RoadMap", "Raven", "Sleep", "GPS", "GrowthMind", "BandExplore", 
+    "BandExploit", "FaceMem", "RSpan", "RouteErr", "SOT", "CreatAct", 
+    "SportAct", "VGAct", "NavAct", "TechAct", "Exercise", "ExploreTend", 
+    "VGExp", "MRCorrect", "MRRT", "SymSpan", "MBT", "MFT"
+]
+
+# Convert categorical variables to numeric for PCA
+# Loc: SantaBarbara -> 1, Irvine -> 2
+data['Loc'] = data['Loc'].map({"SantaBarbara": 1, "Irvine": 2})
+
+
+
+# Hand: R -> 1, L -> 2, else NA
+data['Hand'] = data['Hand'].apply(lambda x: 1 if x == "R" 
+                                  else (2 if x == "L" else pd.NA))
+
+# Gender: Starts with M/m -> 0, Starts with F/f -> 1, else NA
+data['Gender'] = data['Gender'].apply(
+    lambda x: 0 if str(x).lower().startswith("m") 
+    else (1 if str(x).lower().startswith("f") else pd.NA)
+)
+
+# Race: contains 'white' -> 1, contains 'asian' -> 2, else 3
+data['Race'] = data['Race'].apply(
+    lambda x: 1 if 'white' in str(x).lower() 
+    else (2 if 'asian' in str(x).lower() else 3)
+)
+
+# After this, 'data' has cleaned column names and converted categorical variables.
+
+
+continuous_vars_filtered = data.drop(columns=["RBLStrategy", "ID"], errors="ignore")
+
+# Now exclude variables with high missing and low variance contribution
+continuous_vars_filtered = continuous_vars_filtered.drop(columns=["Edu", "SpatialNback", "MBT", "MFT"], errors="ignore")
+
+
+# Assuming you already have 'data' as a DataFrame and 'continuous_vars_filtered' as well.
+# Step 1: Exclude high-missing, low-variance variables
+continuous_vars_filtered = continuous_vars_filtered.drop(columns=["Edu", "SpatialNback", "MBT", "MFT"], errors='ignore')
+
+# Step 2: Combine with ID and RBLStrategy
+cleaned_data = pd.concat([continuous_vars_filtered, data[["ID", "RBLStrategy"]]], axis=1)
+
+# Step 3: Drop rows with any missing values (listwise deletion)
+cleaned_data = cleaned_data.dropna()
+
+# Print to check how many missing values remain
+missing_values_after = cleaned_data.isna().sum().sum()
+num_observations_cleaned = cleaned_data.shape[0]
+
+# Step 4: Remove RBLEff, ID, RBLStrategy
+cleaned_data_final = cleaned_data.drop(columns=["RBLEff", "ID", "RBLStrategy"], errors='ignore')
+
+# Step 5: Standardize selected columns
+cols_to_scale = ["ELEff", "ELSuccess", "VGAct", "VGExp", "SportAct", "Exercise", "MRCorrect", "MRRT"]
+for col in cols_to_scale:
+    # Create a z-scored version: z_col
+    cleaned_data_final[f"z_{col}"] = (cleaned_data_final[col] - cleaned_data_final[col].mean()) / cleaned_data_final[col].std(ddof=0)
+
+# Step 6: Create composite variables
+# ELwfcomposite = (z_ELSuccess - z_ELEff)/2
+cleaned_data_final["ELwfcomposite"] = (cleaned_data_final["z_ELSuccess"] - cleaned_data_final["z_ELEff"]) / 2
+
+# VGcomposite = (z_VGAct + z_VGExp)/2
+cleaned_data_final["VGcomposite"] = (cleaned_data_final["z_VGAct"] + cleaned_data_final["z_VGExp"]) / 2
+
+# Exercisecomposite = (z_SportAct + z_Exercise)/2
+cleaned_data_final["Exercisecomposite"] = (cleaned_data_final["z_SportAct"] + cleaned_data_final["z_Exercise"]) / 2
+
+# Step 7: Remove subfactors of risk behavior scale
+risk_subfactors = ["SocRB", "RecRB", "GambRB", "HealthRB", "EthicsRB", "InvRB"]
+cleaned_data_final = cleaned_data_final.drop(columns=risk_subfactors, errors='ignore')
+
+# MRcomposite = (z_MRCorrect - z_MRRT)/2
+cleaned_data_final["MRcomposite"] = (cleaned_data_final["z_MRCorrect"] - cleaned_data_final["z_MRRT"]) / 2
+
+# Remove original variables now that composites are created
+vars_to_remove = ["ELEff", "ELSuccess", "VGAct", "VGExp", "SportAct", "Exercise", "MRCorrect", "MRRT"] \
+                 + [f"z_{col}" for col in cols_to_scale]
+
+cleaned_data_final = cleaned_data_final.drop(columns=vars_to_remove, errors='ignore')
+
+
+# 1. Remove RBLEff, ID, RBLStrategy
+cleaned_data_final = cleaned_data.drop(columns=["RBLEff", "ID", "RBLStrategy"], errors="ignore")
+
+# 2. Standardize selected columns (similar to mutate(across(..., scale)))
+cols_to_scale = ["ELEff", "ELSuccess", "VGAct", "VGExp", "SportAct", "Exercise", "MRCorrect", "MRRT"]
+for col in cols_to_scale:
+    cleaned_data_final[f"z_{col}"] = (cleaned_data_final[col] - cleaned_data_final[col].mean()) / cleaned_data_final[col].std(ddof=0)
+
+# 3. Create composite variables
+cleaned_data_final["ELwfcomposite"] = (cleaned_data_final["z_ELSuccess"] - cleaned_data_final["z_ELEff"]) / 2
+cleaned_data_final["VGcomposite"] = (cleaned_data_final["z_VGAct"] + cleaned_data_final["z_VGExp"]) / 2
+cleaned_data_final["Exercisecomposite"] = (cleaned_data_final["z_SportAct"] + cleaned_data_final["z_Exercise"]) / 2
+
+# 4. Remove subfactors of the risk behavior scale (SocRB through InvRB)
+risk_subfactors = ["SocRB", "RecRB", "GambRB", "HealthRB", "EthicsRB", "InvRB"]
+cleaned_data_final = cleaned_data_final.drop(columns=risk_subfactors, errors="ignore")
+
+# 5. Group MRCorrect and MRRT into one variable
+cleaned_data_final["MRcomposite"] = (cleaned_data_final["z_MRCorrect"] - cleaned_data_final["z_MRRT"]) / 2
+
+# Remove original variables and their z-scaled versions used for composites
+vars_to_remove = ["ELEff", "ELSuccess", "VGAct", "VGExp", "SportAct", "Exercise", "MRCorrect", "MRRT"]
+zvars_to_remove = [f"z_{col}" for col in cols_to_scale]  # z_ELEff, z_ELSuccess, etc.
+
+cleaned_data_final = cleaned_data_final.drop(columns=vars_to_remove + zvars_to_remove, errors="ignore")
+
+# Assuming cleaned_data_final and cleaned_data are loaded and cleaned as previously done
+if 'RBLStrategy' not in cleaned_data_final.columns:
+    cleaned_data_final["RBLStrategy"] = cleaned_data["RBLStrategy"]
+
+# Prepare features and target
+y = cleaned_data_final['RBLStrategy']
+X = cleaned_data_final.drop(columns=['RBLStrategy', 'ID'], errors='ignore')
+
+# Ensure numeric data and handle missing/invalid values
+for col in X.columns:
+    if not pd.api.types.is_numeric_dtype(X[col]):
+        X[col] = pd.to_numeric(X[col], errors='coerce')
+X.replace([np.inf, -np.inf], np.nan, inplace=True)
+valid_idx = X.notnull().all(axis=1) & y.notnull()
+X = X[valid_idx]
+y = y[valid_idx]
+
+# Standardize features
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+```
+
+The model calculates cosine similarity between the target user’s feature vector and the feature vectors of all users in the training set. Cosine similarity measures how similar two users are based on their attributes. The model selects the k most similar users (top k neighbors) to the target user.
+
+```{python}
+
+from sklearn.metrics.pairwise import cosine_similarity
+
+def recommend_route_strategy_cbf(user_traits, X_train, y_train, k=5, threshold=None):
+    """
+    Recommend a route strategy for a new user based on similarity to existing users.
+
+    Parameters:
+    - user_traits: Feature vector of the new user.
+    - X_train: Training feature set.
+    - y_train: RBLStrategy values of training set.
+    - k: Number of most similar neighbors to consider.
+    - threshold: Threshold for deciding shortcut (1) or familiar route (0).
+    
+    Returns:
+    - Dictionary with recommendation details.
+    """
+    user_traits = user_traits.reshape(1, -1)
+    sim_scores = cosine_similarity(user_traits, X_train).flatten()
+    top_k_indices = np.argsort(sim_scores)[-k:]
+    top_k_RBL = y_train[top_k_indices]
+    avg_RBL = np.mean(top_k_RBL)
+    if threshold is None:
+        threshold = np.median(y_train)
+    recommended = 1 if avg_RBL > threshold else 0
+    return {
+        "neighbors_indices": top_k_indices,
+        "neighbors_RBLStrategy": top_k_RBL,
+        "recommended_strategy": recommended,
+        "average_RBLStrategy": avg_RBL,
+        "threshold": threshold
+    }
+
+# Evaluate CBF
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+threshold = np.median(y_train)
+y_test_binary = (y_test.values > threshold).astype(int)
+predictions = []
+for i in range(X_test.shape[0]):
+    result = recommend_route_strategy_cbf(X_test[i, :], X_train, y_train.values, k=5, threshold=threshold)
+    predictions.append(result["recommended_strategy"])
+
+# If a user's RBLStrategy > median training RBLStrategy, we consider their "true" preference as shortcut (1), else 0.
+
+
+
+
+```
+
+### 3.2.2 Model Performance
+
+```{python}
+accuracy = accuracy_score((y_test > threshold).astype(int), predictions)
+print("CBF Accuracy:", accuracy)
+
+random_user_index = random.randint(0, X_scaled.shape[0] - 1)
+random_user_traits = X_scaled[random_user_index, :]
+result_cbf = recommend_route_strategy_cbf(random_user_traits, X_scaled, y.values, k=5)
+print("CBF Example Recommendation:", result_cbf)
+# Confusion Matrix
+cm = confusion_matrix(y_test_binary, predictions)
+print("Confusion Matrix:\n", cm)
+
+```
+
+The CBF model achieves an accuracy of 67.4%, meaning it correctly predicts the route preference for roughly 67% of the test users.The confusion matrix reveals that the CBF model performs reasonably well, particularly in predicting shortcuts, with a precision and recall of 72%. However, the model struggles slightly with identifying familiar routes, as indicated by its specificity (61.1%).
+
+`neighbors_indices`: `[145, 132, 165, 192, 198]` are the indices of the top 5 most similar users to the target user in the training set, based on cosine similarity.
+
+`neighbors_RBLStrategy`: `[0.26, 0.35, 0.06, 0.38, 0.3]` are the RBLStrategy values (continuous preferences for route selection) of the top 5 neighbors
+
+`recommended_strategy`: `0`
+Since the `average_RBLStrategy` `(0.27)` is below the threshold `(0.33)`, the model recommends a *familiar route (0)* for the user.
+
+By analyzing the selected neighbors, we can gain insights into the logic behind the recommendation. The top neighbors’ RBLStrategy values ([0.22, 0.42, 0.41, 0.24, 0.57]) show a preference toward slightly higher route strategies on average, leading to a shortcut recommendation.
+
+*K-Fold Cross-Validation*
+
+We also divided our dataset into 5 folds and do cross-validation to estimates how well the model will generalize to unseen data.
+
+```{python}
+import pandas as pd
+import numpy as np
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import KFold
+from sklearn.metrics import accuracy_score, confusion_matrix, precision_score, recall_score, f1_score, roc_auc_score
+import random
+
+# Re-add the RBLStrategy to cleaned_data_final
+cleaned_data_final["RBLStrategy"] = cleaned_data["RBLStrategy"]
+
+# Ensure RBLStrategy is present
+if 'RBLStrategy' not in cleaned_data_final.columns:
+    raise ValueError("RBLStrategy not found in cleaned_data_final.")
+
+# Prepare the data
+non_feature_cols = ['ID', 'RBLStrategy']
+feature_cols = [col for col in cleaned_data_final.columns if col not in non_feature_cols]
+X_raw = cleaned_data_final[feature_cols]
+y_continuous = cleaned_data_final['RBLStrategy']
+
+# Standardize features
+scaler = StandardScaler()
+X = scaler.fit_transform(X_raw)
+
+# Convert continuous RBLStrategy to binary for evaluation
+global_threshold = np.median(y_continuous)
+y = (y_continuous > global_threshold).astype(int)  # 1 = shortcut, 0 = familiar route
+
+# Define the content-based recommendation function
+def recommend_route_strategy(user_traits, X_train, y_train_cont, k=5, threshold=None):
+    """
+    Recommend a route strategy for a new user based on similarity to existing users.
+    
+    Parameters:
+    - user_traits: np.array (n_features,) representing the new user's traits
+    - X_train: np.array (n_samples, n_features) training features
+    - y_train_cont: np.array (n_samples,) continuous RBLStrategy of training set
+    - k: number of neighbors to consider
+    - threshold: threshold for deciding "shortcut" vs "familiar route"
+                 If None, uses median of y_train_cont.
+    
+    Returns:
+    dict with recommendation details.
+    """
+    user_traits = user_traits.reshape(1, -1)
+    sim_scores = cosine_similarity(user_traits, X_train).flatten()
+    top_k_indices = np.argsort(sim_scores)[-k:]
+    top_k_RBL = y_train_cont[top_k_indices]
+    avg_RBL = np.mean(top_k_RBL)
+    
+    if threshold is None:
+        threshold = np.median(y_train_cont)
+    recommended = 1 if avg_RBL > threshold else 0
+    
+    return {
+        "neighbors_indices": top_k_indices,
+        "neighbors_RBLStrategy": top_k_RBL,
+        "recommended_strategy": recommended,
+        "average_RBLStrategy": avg_RBL,
+        "threshold": threshold
+    }
+
+# K-Fold Cross-Validation for Comprehensive Diagnostics
+n_splits = 5
+kf = KFold(n_splits=n_splits, shuffle=True, random_state=42)
+
+accuracies = []
+precisions = []
+recalls = []
+f1_scores = []
+aucs = []
+conf_matrices = []
+
+for train_index, test_index in kf.split(X):
+    X_train, X_test = X[train_index], X[test_index]
+    y_train_cont = y_continuous.iloc[train_index].values
+    y_test_cont = y_continuous.iloc[test_index].values
+    
+    # Local threshold based on the training fold
+    local_threshold = np.median(y_train_cont)
+    y_train_bin = (y_train_cont > local_threshold).astype(int)
+    y_test_bin = (y_test_cont > local_threshold).astype(int)
+    
+    y_pred = []
+    for i in range(X_test.shape[0]):
+        res = recommend_route_strategy(X_test[i, :], X_train, y_train_cont, k=5, threshold=local_threshold)
+        y_pred.append(res["recommended_strategy"])
+    
+    # Compute metrics
+    acc = accuracy_score(y_test_bin, y_pred)
+    prec = precision_score(y_test_bin, y_pred, zero_division=0)
+    rec = recall_score(y_test_bin, y_pred, zero_division=0)
+    f1 = f1_score(y_test_bin, y_pred, zero_division=0)
+    
+    # AUC (approximate, since predictions are binary)
+    try:
+        auc = roc_auc_score(y_test_bin, y_pred)
+    except ValueError:
+        auc = np.nan
+    
+    cm = confusion_matrix(y_test_bin, y_pred)
+    
+    accuracies.append(acc)
+    precisions.append(prec)
+    recalls.append(rec)
+    f1_scores.append(f1)
+    aucs.append(auc)
+    conf_matrices.append(cm)
+
+# Summarize Cross-Validation Results
+print("===== Cross-Validation Results =====")
+print(f"Number of folds: {n_splits}")
+
+print("\nAverage Metrics Across All Folds:")
+print(f"Accuracy: {np.mean(accuracies):.3f} ± {np.std(accuracies):.3f}")
+print(f"Precision: {np.mean(precisions):.3f} ± {np.std(precisions):.3f}")
+print(f"Recall: {np.mean(recalls):.3f} ± {np.std(recalls):.3f}")
+print(f"F1-Score: {np.mean(f1_scores):.3f} ± {np.std(f1_scores):.3f}")
+```
+
+The model achieved an average accuracy of **0.693 ± 0.034**, indicating it correctly predicts route preferences for 69.3% of users, with consistent performance across folds. Precision was **0.645 ± 0.069**, reflecting moderate reliability in identifying true shortcut preferences. Recall was relatively high at **0.796 ± 0.043**, capturing 79.6% of actual shortcut preferences but with some false positives. The F1-score of **0.709 ± 0.038** highlights a good balance between precision and recall, ensuring robust performance in managing false positives and negatives.
+
+
+**Example Usage**
+
+The example usage confirms that the model can provide clear, interpretable recommendations based on user similarity, showcasing its practical applicability:
+
+```{python}
+# Example Usage
+# Let's pick a random user from the entire dataset (after scaling)
+# and see what recommendation they would get using all data as training.
+random_user_index = random.randint(0, X.shape[0]-1)
+random_user_traits = X[random_user_index, :]
+
+# Use the entire dataset as "training" for the demo
+res_example = recommend_route_strategy(random_user_traits, X, y_continuous.values, k=5, threshold=global_threshold)
+
+print("\n===== Example Usage =====")
+print(f"Selected random user index: {random_user_index}")
+print("Neighbors' Indices:", res_example["neighbors_indices"])
+print("Neighbors' RBLStrategy values:", res_example["neighbors_RBLStrategy"])
+print("Average RBLStrategy among neighbors:", res_example["average_RBLStrategy"])
+print("Threshold used:", res_example["threshold"])
+strategy_str = "shortcut" if res_example["recommended_strategy"] == 1 else "familiar route"
+print("Recommended Strategy:", strategy_str)
+
+
+```
+
+For a randomly selected user (index 95), the model identified the top 5 most similar users based on cosine similarity: indices [13, 172, 29, 0, 95].The RBLStrategy values of the neighbors are [0.09, 0.05, 0.05, 0.45, 0.71]. These values represent the route preferences of the similar users, where lower values (closer to 0) indicate a preference for familiar routes and higher values (closer to 1) indicate a preference for shortcuts.
+
+
+## 3.3 Random Forest Regressor Model *PYTHON*
+
+We also try Supervised learning to predict the continuous RBLStrategy value based on user traits. The model (e.g., RandomForestRegressor) is trained on historical data, learning how combinations of user traits map to their preferred route strategies. For new users, it predicts a numerical RBLStrategy score, which is then converted into a binary recommendation (shortcut or familiar route).
+
+### 3.3.1 Random Forest Regressor Model Building
+
+
+```{python}
+
+X_train, X_test, y_train, y_test = train_test_split(X_scaled, y, test_size=0.2, random_state=42)
+
+# Train Random Forest Regressor
+model_supervised = RandomForestRegressor(random_state=42)
+model_supervised.fit(X_train, y_train)
+
+# Predict and evaluate
+y_pred = model_supervised.predict(X_test)
+threshold = np.median(y_train)
+predicted_binary = (y_pred > threshold).astype(int)
+actual_binary = (y_test > threshold).astype(int)
+```
+
+### 3.3.2 Model Perofrmance
+
+```{python}
+accuracy = accuracy_score(actual_binary, predicted_binary)
+print("Supervised Model Accuracy:", accuracy)
+
+# Additional Metrics
+mse = mean_squared_error(y_test, y_pred)
+r2 = r2_score(y_test, y_pred)
+print("MSE:", mse)
+print("R^2:", r2)
+```
+
+The supervised model, implemented using a `RandomForestRegressor`, achieved an accuracy of 60.47%, indicating that the model correctly classified approximately 60% of the test samples when converting continuous predictions to binary recommendations. The Mean Squared Error (MSE) of 0.0388 reflects the average squared differences between predicted and actual RBLStrategy values, showing some deviations but relatively small in magnitude. However, the R² score (0.138) indicates that the model explains only about 13.8% of the variance in the target variable, suggesting that the model's predictive power for the continuous variable is limited.
+These results suggest that while the model performs moderately well in binary classification tasks (evaluated through accuracy), it struggles to capture the underlying complexity of the continuous RBLStrategy values. This limitation could be addressed by exploring feature engineering, optimizing hyperparameters, or using alternative supervised learning models.
+
+### 3.3.3 Visualizations
+
+```{python}
+# Assuming cleaned_data_final and cleaned_data are loaded and cleaned as previously done
+if 'RBLStrategy' not in cleaned_data_final.columns:
+    cleaned_data_final["RBLStrategy"] = cleaned_data["RBLStrategy"]
+
+# Prepare features and target
+y = cleaned_data_final['RBLStrategy']
+X = cleaned_data_final.drop(columns=['RBLStrategy', 'ID'], errors='ignore')
+
+# Ensure numeric
+for col in X.columns:
+    if not pd.api.types.is_numeric_dtype(X[col]):
+        X[col] = pd.to_numeric(X[col], errors='coerce')
+X.replace([np.inf, -np.inf], np.nan, inplace=True)
+valid_idx = X.notnull().all(axis=1) & y.notnull()
+X = X[valid_idx]
+y = y[valid_idx]
+
+# Standardize for certain tasks if needed
+scaler = StandardScaler()
+X_scaled = scaler.fit_transform(X)
+
+# A helper function to create correlation heatmap
+def plot_correlation_heatmap(df, title="Correlation Heatmap"):
+    plt.figure(figsize=(12,10))
+    corr = df.corr()
+    sns.heatmap(corr, annot=False, cmap='coolwarm', center=0)
+    plt.title(title)
+    plt.show()
+
+# A helper function for feature importance plot using Random Forest as a surrogate model
+def plot_feature_importances(X, y, title="Feature Importances"):
+    rf = RandomForestRegressor(random_state=42)
+    rf.fit(X, y)
+    importances = rf.feature_importances_
+    indices = np.argsort(importances)[::-1]
+    plt.figure(figsize=(10,6))
+    plt.title(title)
+    plt.bar(range(X.shape[1]), importances[indices], color='steelblue', align='center')
+    _ = plt.xticks(range(X.shape[1]), [X.columns[i] for i in indices], rotation=90)
+
+    plt.tight_layout()
+    plt.show()
+
+
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.linear_model import LinearRegression
+
+# Binary classification or regression?
+
+y_pred = model_supervised.predict(X_test)
+
+# Residual Diagnostics: since this is regression
+residuals = y_test - y_pred
+fitted = y_pred
+
+# QQ-plot for residuals
+sm.qqplot(residuals, line='45')
+plt.title("QQ-Plot of Residuals (Supervised)")
+plt.show()
+```
+
+The QQ-plot evaluates whether the residuals from the supervised model follow a normal distribution, which is a key assumption for many regression-based models. In the plot, most residuals align reasonably well with the theoretical quantiles along the diagonal line. However, deviations are observed in the tails, particularly for extreme residuals, suggesting some degree of non-normality. This could indicate the presence of outliers or model misfit in capturing certain patterns in the data. Further adjustments, such as transforming the dependent variable or accounting for heteroscedasticity, may improve normality.
+
+```{python}
+# Residuals vs Fitted
+plt.figure()
+sns.scatterplot(x=fitted, y=residuals)
+plt.axhline(0, color='red', linestyle='--')
+plt.title("Residuals vs Fitted (Supervised)")
+plt.xlabel("Fitted")
+plt.ylabel("Residuals")
+plt.show()
+```
+
+This plot examines the relationship between residuals and fitted values to assess whether the model assumptions of linearity and homoscedasticity hold. The residuals exhibit a clear pattern, with a downward trend as fitted values increase. This indicates potential heteroscedasticity, where the variance of residuals changes across the range of fitted values. Such a pattern suggests that the model may be misspecified or that certain interactions or non-linear relationships in the data remain unaccounted for. Incorporating transformations or interaction terms could address this issue.
+
+```{python}
+# Feature Importance for supervised model
+importances = model_supervised.feature_importances_
+indices = np.argsort(importances)[::-1]
+plt.figure(figsize=(10,6))
+plt.title("Feature Importances (Supervised Model)")
+plt.bar(range(X.shape[1]), importances[indices], color='steelblue', align='center')
+_ =plt.xticks(range(X.shape[1]), [X.columns[i] for i in indices], rotation=90)
+plt.tight_layout()
+plt.show()
+
+```
+
+
+
+The feature importance plot reveals the relative contribution of predictors to the supervised model. ELPoint and RBLPoint emerge as the most influential features, underscoring the critical role of spatial navigation and exploratory pointing performance in predicting RBLStrategy. Cognitive traits such as VGComposite and BandExplore also play significant roles, reflecting the relevance of cognitive exploration in route selection. Other variables like PaperFold and SA show moderate influence, emphasizing their importance in understanding individual navigation behaviors. Less impactful predictors may indicate redundancy or weaker associations with the outcome variable, suggesting opportunities for dimensionality reduction or model simplification.
+
+
+
+
+# 4. Discussion
+
+
+## 4.1 Limitations
+
+- Generalization: The models were trained and tested on a single dataset, which may not fully represent real-world navigation scenarios. As a result, the findings might not generalize well to broader or more diverse populations.
+
+- Model Complexity: While the supervised and hybrid models attempted to capture non-linear relationships, the relatively low R² values in the supervised approach indicate that there may be additional unobserved factors influencing navigation strategy that were not captured by the existing predictors.
+
+
+## 4.2 Future Directions
+
+- Improving Model Performance: Future work could explore advanced machine learning techniques such as ensemble models, deep learning architectures, or hybrid approaches that combine supervised learning with content-based filtering to enhance both accuracy and interpretability. Hyperparameter optimization and feature selection could also be prioritized to refine the existing models.
+
+- Expanding the Dataset: Collecting additional data from larger and more diverse populations would improve the generalizability of the findings. Incorporating real-world navigation tasks, dynamic contexts, or longitudinal data could provide richer insights into how navigation strategies evolve over time or vary across situations.
+
+- Incorporating Additional Features: Introducing new predictors, such as environmental factors, real-time navigation behaviors, or emotional responses, could help capture the complexity of navigation decisions more comprehensively.
+
+- Exploring Alternative Evaluation Metrics: Beyond accuracy and R², evaluating the models using precision, recall, F1 scores, or other domain-specific metrics could provide a more nuanced understanding of their performance, especially in imbalanced datasets.
+
+- Real-World Applications: Future studies could implement the models in practical settings, such as navigation apps or virtual simulations, to assess their utility in guiding users in unfamiliar environments or improving personalized recommendations.
+
+\newpage
+
+# 5. Conclusion
+
+In this project, we utilized multiple modeling approaches to analyze and predict navigation strategies (RBL Strategy) based on demographic, cognitive, and personality variables. Each model offered unique insights and had varying levels of performance:
+
+- *Linear Regression*: The base model explained approximately 60% of the variability in RBLStrategy, highlighting the significance of cognitive measures such as navigation efficiency (RBLEff) and spatial memory (RBLPoint). Gender differences also emerged as an important factor, with males more likely to adopt shortcut strategies. However, the interaction model, which tested combined effects of demographic and cognitive traits, did not substantially improve explanatory power, as reflected in its lower adjusted R² and fewer significant predictors.
+
+- *Content-Based Filtering (CBF)*: The CBF model demonstrated moderate accuracy (67.4%) by leveraging user similarity to predict navigation preferences. While effective for personalized recommendations, its performance varied across route types, with stronger precision in predicting shortcuts but weaker specificity for familiar routes. This highlights the model's potential for personalization but underscores the need for refinement to improve balance across outcomes.
+
+- *Random Forest Regressor*: The supervised model showed limited predictive power for the continuous RBLStrategy values, with an R² of 0.138. While its binary classification accuracy (60.47%) was comparable to other models, its inability to fully capture the underlying complexity suggests the need for further exploration of features, hyperparameter tuning, or more advanced machine learning techniques.
+
+In conclusion, the Linear Regression Base Model emerged as the most interpretable and explanatory approach, effectively identifying key predictors and offering actionable insights. The CBF Model provided strong personalization potential, while the Random Forest Model showed moderate success but highlighted opportunities for improvement in capturing complex patterns. Combining these insights, future work could focus on integrating the strengths of these models to achieve better interpretability, personalization, and predictive performance.
+
+
+--------------------------------------------------------------------------------------
+
+
+# Appendix
+
+
+- Boone, A. P., Maghen, B., & Hegarty, M. (2019). Instructions matter: Individual differences in navigation strategy and ability. Memory & Cognition, 47, 1401-1414. https://doi.org/10.3758/s13421-019-00941-5
+
+- Hegarty, M., He, C., Boone, A. P., Yu, S., Jacobs, E. G., & Chrastil, E. R. (2023). Understanding differences in wayfinding strategies. Topics in Cognitive Science, 15(1), 102-119.  https://doi.org/10.1111/tops.12592
+
+
